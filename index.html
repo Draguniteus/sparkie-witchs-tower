@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sparkie — Witch's Tower</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #050210; font-family: 'Georgia', serif; }
+    canvas { display: block; }
+    #hint { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); color: rgba(180,120,255,0.5); font-size: 12px; letter-spacing: 0.08em; pointer-events: none; transition: opacity 2s ease; }
+    #title { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); color: rgba(160,100,220,0.5); font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+<div id="title">🧙‍♀️ WITCH'S TOWER 🧙‍♀️</div>
+<div id="hint">drag to orbit</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x050210, 0.015);
+scene.background = new THREE.Color(0x050210);
+
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 400);
+camera.position.set(0, 15, 35);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.15;
+controls.maxPolarAngle = Math.PI * 0.65;
+controls.minDistance = 8;
+controls.maxDistance = 70;
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene, camera));
+composer.addPass(new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.6, 0.6, 0.1));
+
+scene.add(new THREE.AmbientLight(0x0a0520, 0.8));
+
+// Magic lights
+const magicColors = [0xaa44ff, 0xff44aa, 0x44ffaa, 0xffaa44];
+magicColors.forEach((c, i) => {
+  const pl = new THREE.PointLight(c, 3.0, 25);
+  const angle = (i / magicColors.length) * Math.PI * 2;
+  pl.position.set(Math.cos(angle) * 12, 5 + i * 3, Math.sin(angle) * 12);
+  pl.userData.phase = i * 1.2;
+  scene.add(pl);
+});
+
+// Moon
+{
+  const moonGeo = new THREE.SphereGeometry(4, 16, 16);
+  const moonMat = new THREE.MeshStandardMaterial({ color: 0xddcc99, emissive: 0xaaaabb, emissiveIntensity: 0.3, roughness: 0.9 });
+  const moon = new THREE.Mesh(moonGeo, moonMat);
+  moon.position.set(-35, 35, -50);
+  scene.add(moon);
+}
+
+// Stars
+{
+  const pos = new Float32Array(3000 * 3);
+  for (let i = 0; i < 3000; i++) {
+    const theta = Math.random() * Math.PI * 2, phi = Math.acos(2 * Math.random() - 1), r = 100 + Math.random() * 100;
+    pos[i*3] = r * Math.sin(phi) * Math.cos(theta); pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta); pos[i*3+2] = r * Math.cos(phi);
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `uniform float uTime; varying float vA; void main() { vA = 0.5 + 0.5 * sin(uTime * 2.5 + position.x * 0.05); gl_PointSize = 1.5 * vA; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `varying float vA; void main() { float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard; gl_FragColor = vec4(0.9, 0.85, 1.0, (1.0 - smoothstep(0.1, 0.5, d)) * vA); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  const stars = new THREE.Points(geo, starMat); stars.userData.isStars = true; scene.add(stars);
+}
+
+// Tower base / hill
+{
+  const hillGeo = new THREE.ConeGeometry(12, 5, 32);
+  const hillMat = new THREE.MeshStandardMaterial({ color: 0x1a0a15, roughness: 0.95 });
+  const hill = new THREE.Mesh(hillGeo, hillMat);
+  hill.position.y = -2.5;
+  scene.add(hill);
+}
+
+// Tower
+function makeTower() {
+  const group = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x2a1a30, roughness: 0.95 });
+  const darkStoneMat = new THREE.MeshStandardMaterial({ color: 0x1a0a20, roughness: 0.98 });
+  const purpleStoneMat = new THREE.MeshStandardMaterial({ color: 0x3a2050, roughness: 0.9 });
+
+  // Foundation
+  const foundGeo = new THREE.CylinderGeometry(3.5, 4, 3, 8);
+  group.add(new THREE.Mesh(foundGeo, stoneMat));
+
+  // Main shaft
+  const shaftGeo = new THREE.CylinderGeometry(2.8, 3.5, 18, 8);
+  const shaft = new THREE.Mesh(shaftGeo, purpleStoneMat);
+  shaft.position.y = 10.5;
+  group.add(shaft);
+
+  // Stone details (rings)
+  for (let i = 0; i < 8; i++) {
+    const ringGeo = new THREE.TorusGeometry(3.0 - i * 0.05, 0.15, 8, 32);
+    const ring = new THREE.Mesh(ringGeo, stoneMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 2 + i * 2.2;
+    group.add(ring);
+  }
+
+  // Windows (glowing)
+  const winMat = new THREE.MeshStandardMaterial({ color: 0xaa44ff, emissive: 0x8822ff, emissiveIntensity: 2.0 });
+  for (let i = 0; i < 5; i++) {
+    const winGeo = new THREE.CircleGeometry(0.5, 8);
+    const win = new THREE.Mesh(winGeo, winMat);
+    const angle = (i / 5) * Math.PI * 2;
+    win.position.set(Math.cos(angle) * 2.81, 4 + i * 3, Math.sin(angle) * 2.81);
+    win.rotation.y = angle;
+    group.add(win);
+  }
+
+  // Balcony
+  const balconyGeo = new THREE.CylinderGeometry(4, 3.5, 0.5, 8);
+  const balcony = new THREE.Mesh(balconyGeo, stoneMat);
+  balcony.position.y = 15;
+  group.add(balcony);
+
+  // Railing posts
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.5, 6), stoneMat);
+    post.position.set(Math.cos(angle) * 3.7, 15.75, Math.sin(angle) * 3.7);
+    group.add(post);
+  }
+
+  // Wizard figure on balcony
+  const robeMat = new THREE.MeshStandardMaterial({ color: 0x2a1040, roughness: 0.9 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 1.5, 8), robeMat);
+  body.position.set(0.5, 16.5, 0);
+  group.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), robeMat);
+  head.position.set(0.5, 17.5, 0);
+  group.add(head);
+  const hatGeo = new THREE.ConeGeometry(0.35, 1.0, 8);
+  const hat = new THREE.Mesh(hatGeo, robeMat);
+  hat.position.set(0.5, 18.3, 0);
+  group.add(hat);
+
+  // Pointed roof
+  const roofGeo = new THREE.ConeGeometry(3.2, 6, 8);
+  const roof = new THREE.Mesh(roofGeo, darkStoneMat);
+  roof.position.y = 22;
+  group.add(roof);
+
+  // Spire
+  const spireGeo = new THREE.CylinderGeometry(0.1, 0.3, 3, 6);
+  const spireMat = new THREE.MeshStandardMaterial({ color: 0xaa44ff, emissive: 0x8822ff, emissiveIntensity: 1.5 });
+  const spire = new THREE.Mesh(spireGeo, spireMat);
+  spire.position.y = 26.5;
+  group.add(spire);
+
+  // Orb at top
+  const orbGeo = new THREE.SphereGeometry(0.4, 12, 12);
+  const orbMat = new THREE.MeshStandardMaterial({ color: 0xdd66ff, emissive: 0xaa44ff, emissiveIntensity: 2.5 });
+  const orb = new THREE.Mesh(orbGeo, orbMat);
+  orb.position.y = 28.5;
+  orb.userData.isOrb = true;
+  group.add(orb);
+
+  // Gargoyles
+  const gargColors = [0x2a1a30, 0x3a2a40, 0x1a0a20];
+  [[-2.5,13,2.5],[2.5,13,2.5],[-2.5,13,-2.5],[2.5,13,-2.5]].forEach(([x,y,z], i) => {
+    const gargMat = new THREE.MeshStandardMaterial({ color: gargColors[i % 3], roughness: 0.9 });
+    const gargBody = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), gargMat);
+    gargBody.scale.set(1, 0.7, 1.5);
+    gargBody.position.set(x, y, z);
+    group.add(gargBody);
+    const gargHead = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 5), gargMat);
+    gargHead.position.set(x, y + 0.4, z);
+    group.add(gargHead);
+  });
+
+  return group;
+}
+
+const tower = makeTower();
+scene.add(tower);
+
+// Cauldron
+{
+  const cauldronGroup = new THREE.Group();
+  const metalMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5, metalness: 0.8 });
+  const liquidMat = new THREE.MeshStandardMaterial({ color: 0x00ff44, emissive: 0x00cc33, emissiveIntensity: 1.0, transparent: true, opacity: 0.85 });
+  
+  const cauldron = new THREE.Mesh(new THREE.SphereGeometry(1.2, 16, 12), metalMat);
+  cauldron.scale.y = 0.7;
+  cauldron.position.y = 0.5;
+  cauldronGroup.add(cauldron);
+  
+  const liquid = new THREE.Mesh(new THREE.SphereGeometry(1.0, 16, 12), liquidMat);
+  liquid.scale.y = 0.5;
+  liquid.position.y = 0.7;
+  cauldronGroup.add(liquid);
+
+  // Bubble particles above cauldron
+  const bubbleGeo = new THREE.BufferGeometry();
+  const bPos = new Float32Array(50 * 3);
+  for (let i = 0; i < 50; i++) {
+    bPos[i*3] = (Math.random() - 0.5) * 1.5; bPos[i*3+1] = Math.random() * 2 + 1; bPos[i*3+2] = (Math.random() - 0.5) * 1.5;
+  }
+  bubbleGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+  const bubbleMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `uniform float uTime; void main() { vec3 p = position; p.y = mod(p.y + uTime * 0.5, 3.0); gl_PointSize = 3.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
+    fragmentShader: `void main() { float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard; gl_FragColor = vec4(0.3, 1.0, 0.4, 0.7 - smoothstep(0.0, 0.5, d) * 0.7); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  const bubbles = new THREE.Points(bubbleGeo, bubbleMat);
+  bubbles.userData.isBubbles = true;
+  cauldronGroup.add(bubbles);
+
+  cauldronGroup.position.set(5, 0, 2);
+  scene.add(cauldronGroup);
+}
+
+// Magic circle on ground
+{
+  const circleGeo = new THREE.RingGeometry(4, 5, 32);
+  const circleMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float uTime; varying vec2 vUv; void main() { float pulse = 0.5 + 0.5 * sin(uTime * 2.0); vec3 col = vec3(0.5, 0.1, 0.8) * pulse; float alpha = 0.6 * pulse; gl_FragColor = vec4(col, alpha); }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide
+  });
+  const circle = new THREE.Mesh(circleGeo, circleMat);
+  circle.rotation.x = -Math.PI / 2;
+  circle.position.set(5, 0.05, 2);
+  circle.userData.isCircle = true;
+  scene.add(circle);
+
+  // Rune markers
+  const runeGeo = new THREE.BoxGeometry(0.3, 0.1, 0.8);
+  const runeMat = new THREE.MeshStandardMaterial({ color: 0xaa44ff, emissive: 0x8822ff, emissiveIntensity: 1.5 });
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const rune = new THREE.Mesh(runeGeo, runeMat);
+    rune.position.set(5 + Math.cos(angle) * 4.5, 0.05, 2 + Math.sin(angle) * 4.5);
+    rune.rotation.y = angle;
+    scene.add(rune);
+  }
+}
+
+// Trees around tower
+function makeTree(x, z) {
+  const group = new THREE.Group();
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x0a0510, roughness: 1.0 });
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x0a1505, roughness: 1.0 });
+  const glowLeafMat = new THREE.MeshStandardMaterial({ color: 0x1a3010, emissive: 0x003311, emissiveIntensity: 0.5 });
+
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 4, 8), trunkMat);
+  trunk.position.y = 2;
+  group.add(trunk);
+  for (let i = 0; i < 4; i++) {
+    const r = (2.5 - i * 0.4);
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), i < 2 ? glowLeafMat : leafMat);
+    leaf.position.y = 4 + i * 0.7;
+    leaf.scale.y = 0.55;
+    group.add(leaf);
+  }
+  group.position.set(x, 0, z);
+  return group;
+}
+
+[[-14,-8],[14,-8],[-12,12],[12,12],[-18,4],[18,4],[-8,-16],[8,-16]].forEach(([x,z]) => scene.add(makeTree(x, z)));
+
+// Floating books
+{
+  const bookGroup = new THREE.Group();
+  const bookColors = [0x880000, 0x004488, 0x006622, 0x884400];
+  for (let i = 0; i < 15; i++) {
+    const bGeo = new THREE.BoxGeometry(0.5, 0.7, 0.1);
+    const bMat = new THREE.MeshStandardMaterial({ color: bookColors[i % 4], roughness: 0.85 });
+    const book = new THREE.Mesh(bGeo, bMat);
+    book.position.set((Math.random() - 0.5) * 20, 8 + Math.random() * 20, (Math.random() - 0.5) * 20);
+    book.rotation.set(Math.random() * 0.4, Math.random() * Math.PI * 2, Math.random() * 0.4);
+    book.userData.phase = Math.random() * Math.PI * 2;
+    book.userData.speed = 0.3 + Math.random() * 0.4;
+    book.userData.baseY = book.position.y;
+    bookGroup.add(book);
+  }
+  scene.add(bookGroup);
+}
+
+// Magic particles / wisps
+{
+  const wispCount = 400;
+  const pos = new Float32Array(wispCount * 3);
+  const colors = new Float32Array(wispCount * 3);
+  const phases = new Float32Array(wispCount);
+  const wispColorOptions = [new THREE.Color(0xaa44ff), new THREE.Color(0xff44aa), new THREE.Color(0x44ffaa), new THREE.Color(0xffaa44)];
+  for (let i = 0; i < wispCount; i++) {
+    pos[i*3] = (Math.random() - 0.5) * 60; pos[i*3+1] = Math.random() * 30; pos[i*3+2] = (Math.random() - 0.5) * 60;
+    const c = wispColorOptions[i % 4]; colors[i*3] = c.r; colors[i*3+1] = c.g; colors[i*3+2] = c.b;
+    phases[i] = Math.random() * Math.PI * 2;
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const wispMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `attribute color; attribute float aPhase; uniform float uTime; varying vec3 vColor; varying float vA; void main() { vColor = color; float flicker = 0.2 + 0.8 * sin(uTime * 3.0 + aPhase * 6.28); vA = flicker; vec3 p = position; p.y += sin(uTime * 0.4 + aPhase * 3.14) * 1.5; p.x += cos(uTime * 0.3 + aPhase * 2.71) * 1.0; gl_PointSize = 5.0 * flicker; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
+    fragmentShader: `varying vec3 vColor; varying float vA; void main() { float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard; float a = (1.0 - smoothstep(0.0, 0.5, d)) * vA; gl_FragColor = vec4(vColor, a * 0.9); }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, vertexColors: true
+  });
+  const wisps = new THREE.Points(geo, wispMat); wisps.userData.phases = phases; wisps.userData.isWisps = true; scene.add(wisps);
+}
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  // Magic lights pulse
+  scene.children.forEach(c => {
+    if (c.isPointLight && c.userData.phase !== undefined) c.intensity = 3.0 + Math.sin(t * 1.5 + c.userData.phase) * 1.5;
+    if (c.isPoints && c.userData.isStars && c.material?.uniforms?.uTime) c.material.uniforms.uTime.value = t;
+    if (c.userData.isBubbles && c.material?.uniforms?.uTime) c.material.uniforms.uTime.value = t;
+    if (c.userData.isCircle && c.material?.uniforms?.uTime) c.material.uniforms.uTime.value = t;
+    if (c.userData.isWisps && c.material?.uniforms?.uTime) c.material.uniforms.uTime.value = t;
+  });
+
+  // Orb glow
+  tower.traverse(obj => {
+    if (obj.userData.isOrb) {
+      obj.material.emissiveIntensity = 2.0 + Math.sin(t * 2.0) * 1.0;
+      obj.position.y = 28.5 + Math.sin(t * 0.8) * 0.15;
+    }
+  });
+
+  // Floating books
+  bookGroup.children.forEach(book => {
+    book.position.y = book.userData.baseY + Math.sin(t * book.userData.speed + book.userData.phase) * 0.8;
+    book.rotation.y += 0.003;
+  });
+
+  controls.update();
+  composer.render();
+}
+
+const bookGroup = scene.children.find(c => c.isGroup && c.children[0]?.geometry?.type === 'BoxGeometry');
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+setTimeout(() => { document.getElementById('hint').style.opacity = '0'; }, 5000);
+</script>
+</body>
+</html>
